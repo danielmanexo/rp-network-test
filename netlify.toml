@@ -1,0 +1,9 @@
+# Netlify: static files from this folder, /api/* to the functions
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200

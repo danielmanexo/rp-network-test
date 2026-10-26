@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test połączenia</title>
+<style>
+  :root { --ink: #1d1d1b; --muted: #6b6b66; --line: #dddcd6; --ok: #1f7a46; --bad: #b42318; --warn: #a15c07; --bg: #f6f6f3; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { width: min(760px, 100%); margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  .summary { margin: 18px 0; padding: 14px 16px; border-left: 5px solid var(--line); background: #fff; font-weight: 600; }
+  .summary.ok { border-color: var(--ok); }
+  .summary.bad { border-color: var(--bad); }
+  ul { list-style: none; padding: 0; margin: 0; background: #fff; border: 1px solid var(--line); }
+  li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 6px 10px; padding: 12px 14px; border-top: 1px solid var(--line); }
+  li:first-child { border-top: 0; }
+  li i { font-style: normal; font-weight: 700; text-align: center; }
+  li.ok i { color: var(--ok); } li.bad i { color: var(--bad); } li.warn i { color: var(--warn); } li.wait i { color: var(--muted); }
+  li small { grid-column: 2; color: var(--muted); }
+  button { font: inherit; font-weight: 600; padding: 10px 16px; border: 0; background: var(--ink); color: #fff; cursor: pointer; }
+  textarea { width: 100%; height: 150px; margin-top: 10px; font: 12px/1.4 ui-monospace, Consolas, monospace; border: 1px solid var(--line); padding: 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; }
+  iframe { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Test połączenia</h1>
+  <p class="muted">Ta strona sprawdza, czy w Twojej sieci zadziała kurs e-learningowy do recenzji. Nic nie instaluje i nie zbiera danych poza wynikiem testu poniżej. Trwa kilka sekund.</p>
+  <div id="summary" class="summary">Trwa sprawdzanie…</div>
+  <ul id="list"></ul>
+  <div class="row">
+    <button id="copy" type="button">Kopiuj wynik</button>
+    <span class="muted" id="copied"></span>
+  </div>
+  <p class="muted" style="margin-top:10px">Wklej wynik do maila do osoby, która przysłała Ci ten link.</p>
+  <textarea id="report" readonly></textarea>
+</main>
+<script>
+// Each check resolves to [status, detail]: ok, warn (works with a limitation) or bad.
+const checks = [
+  ["Połączenie szyfrowane (HTTPS)", async () => location.protocol === "https:" ? ["ok", ""] : ["warn", "strona otwarta przez " + location.protocol]],
+  ["Skrypty na stronie", async () => ["ok", ""]],
+  ["Dane kursu (plik JSON)", async () => {
+    const r = await fetch("files/data.json", { cache: "no-store" });
+    const j = await r.json();
+    return j.ok ? ["ok", ""] : ["bad", "nieoczekiwana treść"];
+  }],
+  ["Zdjęcie JPG", () => image("files/pic.jpg")],
+  ["Zdjęcie WebP", () => image("files/pic.webp")],
+  ["Dźwięk MP3 (nagrania głosu)", () => media("audio", "files/tone.mp3")],
+  ["Wideo MP4 (animacje)", () => media("video", "files/clip.mp4")],
+  ["Ramka strony (jak w LMS)", () => new Promise((done) => {
+    const f = document.createElement("iframe");
+    const t = setTimeout(() => done(["bad", "ramka się nie załadowała"]), 8000);
+    window.addEventListener("message", (e) => { if (e.data === "frame-ok") { clearTimeout(t); done(["ok", ""]); } });
+    f.src = "frame.html";
+    document.body.append(f);
+  })],
+  ["Zapis postępu w przeglądarce", async () => {
+    try { localStorage.setItem("rp-test", "1"); localStorage.removeItem("rp-test"); return ["ok", ""]; }
+    catch { return ["warn", "przeglądarka nie zapisuje postępu (tryb prywatny?); kurs działa, ale nie zapamięta miejsca"]; }
+  }],
+  ["Pełny ekran", async () => document.fullscreenEnabled ? ["ok", ""] : ["warn", "przeglądarka nie pozwala na pełny ekran"]],
+  ["Wysyłanie komentarzy (serwer)", async () => {
+    const r = await fetch("api/ping", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ test: "komentarz", at: Date.now() }) });
+    if (r.status === 404 || r.status === 405) return ["warn", "ten hosting nie ma serwera (komentarze trzeba by zbierać inaczej)"];
+    const j = await r.json().catch(() => null);
+    return r.ok && j?.ok && j.received?.test === "komentarz" ? ["ok", ""] : ["bad", `serwer odpowiedział ${r.status}`];
+  }],
+];
+
+function image(src) {
+  return new Promise((done) => {
+    const img = new Image();
+    const t = setTimeout(() => done(["bad", "przekroczony czas"]), 10000);
+    img.onload = () => { clearTimeout(t); done(img.naturalWidth > 0 ? ["ok", ""] : ["bad", "pusty obraz"]); };
+    img.onerror = () => { clearTimeout(t); done(["bad", "zablokowany albo niedostępny"]); };
+    img.src = src + "?t=" + Date.now();
+  });
+}
+
+function media(tag, src) {
+  return new Promise((done) => {
+    const el = document.createElement(tag);
+    el.preload = "auto";
+    el.muted = true;
+    const t = setTimeout(() => done(["bad", "przekroczony czas (zablokowany albo bardzo wolny)"]), 12000);
+    el.oncanplaythrough = () => { clearTimeout(t); done(["ok", ""]); };
+    el.onerror = () => { clearTimeout(t); done(["bad", "zablokowany albo format nieobsługiwany"]); };
+    el.src = src + "?t=" + Date.now();
+    el.load();
+  });
+}
+
+const MARK = { ok: "✓", warn: "!", bad: "✕", wait: "…" };
+const list = document.getElementById("list");
+const rows = checks.map(([name]) => {
+  const li = document.createElement("li");
+  li.className = "wait";
+  li.innerHTML = `<i>${MARK.wait}</i><span></span><small></small>`;
+  li.querySelector("span").textContent = name;
+  list.append(li);
+  return li;
+});
+
+(async () => {
+  const results = await Promise.all(checks.map(async ([name, run], i) => {
+    let res;
+    try { res = await run(); } catch (e) { res = ["bad", e && e.message ? e.message : "błąd"]; }
+    const li = rows[i];
+    li.className = res[0];
+    li.querySelector("i").textContent = MARK[res[0]];
+    li.querySelector("small").textContent = res[1];
+    return [name, ...res];
+  }));
+  const bad = results.filter((r) => r[1] === "bad").length;
+  const warn = results.filter((r) => r[1] === "warn").length;
+  const s = document.getElementById("summary");
+  s.className = "summary " + (bad ? "bad" : "ok");
+  s.textContent = bad ? `Coś jest zablokowane (${bad}). Prześlij wynik osobie, która przysłała link.` : warn ? `Kurs zadziała. Uwagi: ${warn} (szczegóły niżej).` : "Wszystko działa. Kurs i komentarze zadziałają w tej sieci.";
+  document.getElementById("report").value = [
+    `Test połączenia: ${location.host}`,
+    `Data: ${new Date().toLocaleString("pl-PL")}`,
+    `Przeglądarka: ${navigator.userAgent}`,
+    "",
+    ...results.map(([name, st, detail]) => `${MARK[st]} ${name}${detail ? ` (${detail})` : ""}`),
+  ].join("\n");
+})();
+
+document.getElementById("copy").onclick = async () => {
+  const t = document.getElementById("report");
+  try { await navigator.clipboard.writeText(t.value); } catch { t.select(); document.execCommand("copy"); }
+  document.getElementById("copied").textContent = "Skopiowano.";
+};
+</script>
+</body>
+</html>
